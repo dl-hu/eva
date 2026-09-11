@@ -21,7 +21,8 @@ import (
 //	{"type":"players","players":["ada","bob"]}    lobby roster
 //	{"type":"start","w":50,"h":50,"snakes":[…]}   a game begins
 //	{"type":"tick","moves":[[3,10,4,1]],"dead":[]} one step: snake, x, y, dir
-//	{"type":"over","winner":3,"name":"ada"}       last snake standing
+//	{"type":"over","winner":3,"name":"ada",       last snake standing, and
+//	 "places":[{"place":1,"snake":3,"name":"ada","user":"ada"}]}  the scoreboard
 type clientMsg struct {
 	Type string `json:"type"`
 	Dir  string `json:"dir"`
@@ -72,10 +73,23 @@ type tickMsg struct {
 	Dead  []int    `json:"dead,omitempty"`
 }
 
+// placeMsg is one line of the end-of-match scoreboard. User carries the
+// account name when the player has one, which is what makes their name a link
+// to their history; a guest sends no User at all.
+type placeMsg struct {
+	Place int    `json:"place"`
+	Snake int    `json:"snake"`
+	Name  string `json:"name"`
+	User  string `json:"user,omitempty"`
+
+	userID int64 // not sent: the client has no use for a row id
+}
+
 type overMsg struct {
-	Type   string `json:"type"`
-	Winner int    `json:"winner"` // -1 if nobody survived
-	Name   string `json:"name"`
+	Type   string     `json:"type"`
+	Winner int        `json:"winner"` // -1 if nobody survived
+	Name   string     `json:"name"`
+	Places []placeMsg `json:"places"`
 }
 
 // encode marshals a message, returning nil if it cannot be sent.

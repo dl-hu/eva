@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"dlhu.dev/eva/internal/lobby"
+	"dlhu.dev/eva/internal/store"
 )
 
 // maxNameLen caps a player-supplied display name, in runes.
@@ -25,13 +26,16 @@ var tmpl = template.Must(template.ParseFS(templateFS, "templates/*.html"))
 // server holds the dependencies shared by the handlers.
 type server struct {
 	rooms   *lobby.Manager
+	db      *store.DB
 	players *sessions
 	prefix  string
 }
 
-// New returns the site handler, served under prefix (for example "/eva").
-func New(rooms *lobby.Manager, prefix string) http.Handler {
-	s := &server{rooms: rooms, players: newSessions(), prefix: strings.TrimSuffix(prefix, "/")}
+// New returns the site handler, served under prefix (for example "/eva"). It
+// also points rooms at db, so finished matches are recorded.
+func New(rooms *lobby.Manager, db *store.DB, prefix string) http.Handler {
+	s := &server{rooms: rooms, db: db, players: newSessions(), prefix: strings.TrimSuffix(prefix, "/")}
+	rooms.Record = s.record
 	p := s.prefix
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+p+"/{$}", s.handleHome)
@@ -41,6 +45,12 @@ func New(rooms *lobby.Manager, prefix string) http.Handler {
 	mux.HandleFunc("POST "+p+"/join", s.handleJoin)
 	mux.HandleFunc("GET "+p+"/room/{code}", s.handleRoom)
 	mux.HandleFunc("GET "+p+"/ws/{code}", s.handleWS)
+	mux.HandleFunc("GET "+p+"/signup", s.handleAuthForm)
+	mux.HandleFunc("POST "+p+"/signup", s.handleSignUp)
+	mux.HandleFunc("GET "+p+"/login", s.handleAuthForm)
+	mux.HandleFunc("POST "+p+"/login", s.handleLogIn)
+	mux.HandleFunc("POST "+p+"/logout", s.handleLogOut)
+	mux.HandleFunc("GET "+p+"/u/{name}", s.handleHistory)
 	if p != "" {
 		// Anything else under the prefix goes home; registering the subtree
 		// also makes ServeMux redirect a bare /eva to /eva/.
@@ -50,7 +60,16 @@ func New(rooms *lobby.Manager, prefix string) http.Handler {
 }
 
 func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "index.html", map[string]string{"Prefix": s.prefix})
+	p, _ := s.players.get(r)
+	s.render(w, "index.html", map[string]any{"Prefix": s.prefix, "User": account(p)})
+}
+
+// account returns the name p's history is filed under, empty for a guest.
+func account(p player) string {
+	if p.guest() {
+		return ""
+	}
+	return p.Name
 }
 
 // handleForm renders the create or join form, named by the path it is served
@@ -58,10 +77,11 @@ func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
 // who has played before.
 func (s *server) handleForm(w http.ResponseWriter, r *http.Request) {
 	p, _ := s.players.get(r)
-	s.render(w, "form.html", map[string]string{
+	s.render(w, "form.html", map[string]any{
 		"Prefix": s.prefix,
 		"Action": path.Base(r.URL.Path),
 		"Name":   p.Name,
+		"User":   account(p),
 		"Code":   r.URL.Query().Get("code"),
 		"Error":  r.URL.Query().Get("error"),
 	})
@@ -84,11 +104,35 @@ func (s *server) handleJoin(w http.ResponseWriter, r *http.Request) {
 }
 
 // identify records the name submitted with the form against the requester's
-// session, leaving any account they are signed in to alone.
+// session, leaving any account they are signed in to alone: a signed-in player
+// plays under the name their history is filed under.
 func (s *server) identify(w http.ResponseWriter, r *http.Request) player {
 	p, _ := s.players.get(r)
-	p.Name = cleanName(r.FormValue("name"))
+	if p.guest() {
+		p.Name = cleanName(r.FormValue("name"))
+	}
 	return s.players.set(w, r, s.prefix, p)
+}
+
+// record stores a finished match. It runs on the room's goroutine, so the
+// write happens on its own; a match nobody signed in for is not worth keeping.
+func (s *server) record(code string, places []lobby.Placing) {
+	signedIn := false
+	for _, p := range places {
+		signedIn = signedIn || p.UserID != 0
+	}
+	if !signedIn {
+		return
+	}
+	rows := make([]store.Placing, len(places))
+	for i, p := range places {
+		rows[i] = store.Placing{Place: p.Place, UserID: p.UserID, Name: p.Name}
+	}
+	go func() {
+		if err := s.db.RecordMatch(code, rows); err != nil {
+			log.Printf("recording match in %s: %v", code, err)
+		}
+	}()
 }
 
 func (s *server) handleRoom(w http.ResponseWriter, r *http.Request) {
@@ -104,10 +148,11 @@ func (s *server) handleRoom(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, "/join", url.Values{"code": {code}})
 		return
 	}
-	s.render(w, "room.html", map[string]string{
+	s.render(w, "room.html", map[string]any{
 		"Prefix": s.prefix,
 		"Code":   code,
 		"Name":   p.Name,
+		"User":   account(p),
 	})
 }
 
@@ -123,7 +168,7 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "who are you?", http.StatusUnauthorized)
 		return
 	}
-	if err := room.Serve(w, r, lobby.Player{ID: p.ID, Name: p.Name}); err != nil {
+	if err := room.Serve(w, r, lobby.Player{ID: p.ID, Name: p.Name, UserID: p.UserID}); err != nil {
 		log.Printf("room %s: %v", code, err)
 	}
 }

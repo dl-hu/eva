@@ -2,7 +2,9 @@
 <title>EVA — {{.Code}}</title>
 {{template "style" .}}
 <main class="wide">
+  {{template "nav" .}}
   <p>room <span class="code">{{.Code}}</span> · <span id="status">connecting…</span></p>
+  <ol id="results" class="places" hidden></ol>
   <div id="controls" hidden>
     <label>width <input id="w" type="number" min="50" max="1000" value="250"></label>
     <label>height <input id="h" type="number" min="50" max="1000" value="250"></label>
@@ -21,6 +23,7 @@
   const controls = document.getElementById("controls");
   const list = document.getElementById("players");
   const canvas = document.getElementById("board");
+  const results = document.getElementById("results");
   const ctx = canvas.getContext("2d");
 
   let me = -1, host = false, cell = 0, heads = new Map(), playing = false;
@@ -57,11 +60,38 @@
         canvas.hidden = true;
         controls.hidden = !host; // the host can set up another round
         statusEl.textContent = msg.winner < 0 ? "nobody made it" : msg.name + " wins";
+        showResults(msg.places || []);
         break;
     }
   }
 
+  // showResults lists the finishing order: you in blue, other account holders
+  // in white and linked to their history, guests in grey and inert.
+  function showResults(places) {
+    results.replaceChildren(...places.map((p) => {
+      const li = document.createElement("li");
+      li.value = p.place;
+      let el;
+      if (p.snake === me) {
+        el = document.createElement("span");
+        el.className = "player me";
+      } else if (p.user) {
+        el = document.createElement("a");
+        el.className = "player user";
+        el.href = prefix + "/u/" + encodeURIComponent(p.user);
+      } else {
+        el = document.createElement("span");
+        el.className = "player guest";
+      }
+      el.textContent = p.name; // textContent, so a chosen name cannot be markup
+      li.append(el);
+      return li;
+    }));
+    results.hidden = places.length === 0;
+  }
+
   function begin(msg) {
+    results.hidden = true;
     cell = Math.max(2, Math.floor(640 / Math.max(msg.w, msg.h)));
     canvas.width = msg.w * cell;
     canvas.height = msg.h * cell;

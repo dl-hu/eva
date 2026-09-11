@@ -2,9 +2,13 @@
 <title>EVA — {{.Action}}</title>
 {{template "style" .}}
 <main>
+  {{template "nav" .}}
   <p class="err">{{.Error}}</p>
   <form method="post" action="{{.Prefix}}/{{.Action}}">
-    <input name="name" maxlength="16" placeholder="your name" value="{{.Name}}" autofocus>
+    {{/* A signed-in player plays under the name their history is filed under. */}}
+    {{if not .User}}
+      <input name="name" maxlength="16" placeholder="your name" value="{{.Name}}" autofocus>
+    {{end}}
     {{if eq .Action "join"}}
       <input name="code" maxlength="4" placeholder="room code" value="{{.Code}}" autocapitalize="characters">
     {{end}}

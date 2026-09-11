@@ -1,0 +1,8 @@
+{{define "nav"}}<p class="nav">
+  {{if .User}}
+    <a class="player me" href="{{.Prefix}}/u/{{.User}}">{{.User}}</a>
+    <form method="post" action="{{.Prefix}}/logout"><button class="link">log out</button></form>
+  {{else}}
+    <a href="{{.Prefix}}/login">log in</a> · <a href="{{.Prefix}}/signup">sign up</a>
+  {{end}}
+</p>{{end}}

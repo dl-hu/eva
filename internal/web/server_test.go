@@ -6,11 +6,13 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
 	"dlhu.dev/eva/internal/lobby"
+	"dlhu.dev/eva/internal/store"
 )
 
 // site is the running server under test, reached the way a browser reaches it.
@@ -18,15 +20,21 @@ type site struct {
 	base   string
 	prefix string
 	rooms  *lobby.Manager
+	db     *store.DB
 }
 
-// newTestSite serves the site under prefix.
+// newTestSite serves the site under prefix, over a database of its own.
 func newTestSite(t *testing.T, prefix string) *site {
 	t.Helper()
 	rooms := lobby.NewManager()
-	ts := httptest.NewServer(New(rooms, prefix))
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	ts := httptest.NewServer(New(rooms, db, prefix))
 	t.Cleanup(ts.Close)
-	return &site{base: ts.URL + prefix, prefix: prefix, rooms: rooms}
+	return &site{base: ts.URL + prefix, prefix: prefix, rooms: rooms, db: db}
 }
 
 // browser returns a client that keeps cookies, as one player's browser would.

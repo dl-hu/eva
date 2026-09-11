@@ -24,14 +24,28 @@ const (
 )
 
 // Player is who a connection belongs to. The ID is stable across reconnects,
-// so a host who refreshes the page is still the host.
+// so a host who refreshes the page is still the host. UserID is zero for a
+// guest, who plays the same game but leaves no record of it.
 type Player struct {
-	ID   string
-	Name string
+	ID     string
+	Name   string
+	UserID int64
+}
+
+// Placing is where one player finished a match: place 1 is the last one
+// standing. Players knocked out on the same tick share a place.
+type Placing struct {
+	Place  int
+	UserID int64 // zero for a guest
+	Name   string
 }
 
 // Manager owns every live room and hands them out by code.
 type Manager struct {
+	// Record, if set, is handed each finished match's scoreboard. It runs on
+	// the room's goroutine, so it must not block for long.
+	Record func(code string, places []Placing)
+
 	idleTimeout time.Duration
 
 	mu    sync.Mutex
@@ -104,14 +118,18 @@ type Room struct {
 	state   *game.State
 	playing []*client // snake number to the player driving it
 	ticker  *time.Ticker
+	// knockouts groups snake numbers by the tick they went out on, oldest
+	// first. Reversed, it is the finishing order behind the scoreboard.
+	knockouts [][]int
 }
 
 // client is one connected player as the room sees it.
 type client struct {
-	id    string
-	name  string
-	send  chan []byte
-	snake int // its snake in the running game, -1 when not playing
+	id     string
+	name   string
+	userID int64
+	send   chan []byte
+	snake  int // its snake in the running game, -1 when not playing
 }
 
 // input is something a player sent.
@@ -225,6 +243,7 @@ func (r *Room) start(c *client, w, h int) {
 	w, h = clampSize(w), clampSize(h)
 
 	r.playing = r.playing[:0]
+	r.knockouts = nil
 	for c := range r.clients {
 		r.playing = append(r.playing, c)
 	}
@@ -247,6 +266,9 @@ func (r *Room) start(c *client, w, h int) {
 // step advances the game one tick and tells everyone what moved.
 func (r *Room) step() {
 	moved, died := r.state.Step()
+	if len(died) > 0 {
+		r.knockouts = append(r.knockouts, died)
+	}
 	msg := tickMsg{Type: "tick", Moves: make([][4]int, len(moved)), Dead: died}
 	for i, m := range moved {
 		msg.Moves[i] = [4]int{m.Snake, m.Head.X, m.Head.Y, int(m.Dir)}
@@ -261,22 +283,72 @@ func (r *Room) step() {
 
 // over ends the game and puts the room back in its lobby.
 func (r *Room) over() {
-	msg := overMsg{Type: "over", Winner: -1}
+	places := r.scoreboard()
+	msg := overMsg{Type: "over", Winner: -1, Places: places}
 	for i, sn := range r.state.Snakes {
 		if sn.Alive {
 			msg.Winner, msg.Name = i, r.playing[i].name
 		}
 	}
+	if r.mgr.Record != nil {
+		r.mgr.Record(r.Code, toPlacings(places))
+	}
 	r.ticker.Stop()
 	r.ticker = nil
 	r.state = nil
+	r.knockouts = nil
 	for _, c := range r.playing {
 		c.snake = -1
 	}
-	// ponytail: the match record gets written here, on its own goroutine with
-	// a context detached from the room, once there is a database to write to.
 	r.broadcast(encode(msg))
 	r.broadcastRoster()
+}
+
+// scoreboard ranks everyone who played, best first. The last snakes standing
+// take 1st; the rest place in reverse order of being knocked out, and anyone
+// who went out on the same tick shares a place.
+func (r *Room) scoreboard() []placeMsg {
+	// Survivors first, then each knockout tick from latest to earliest.
+	var survivors []int
+	for i, sn := range r.state.Snakes {
+		if sn.Alive {
+			survivors = append(survivors, i)
+		}
+	}
+	groups := make([][]int, 0, len(r.knockouts)+1)
+	if len(survivors) > 0 {
+		groups = append(groups, survivors)
+	}
+	for i := len(r.knockouts) - 1; i >= 0; i-- {
+		groups = append(groups, r.knockouts[i])
+	}
+
+	out := make([]placeMsg, 0, len(r.playing))
+	place := 1
+	for _, g := range groups {
+		for _, snake := range g {
+			if snake < 0 || snake >= len(r.playing) {
+				continue // a snake nobody is driving; should not happen
+			}
+			c := r.playing[snake]
+			p := placeMsg{Place: place, Snake: snake, Name: c.name, userID: c.userID}
+			if c.userID != 0 {
+				p.User = c.name // signed in, so the display name is the account
+			}
+			out = append(out, p)
+		}
+		place += len(g) // ties all took this place; the next one skips past them
+	}
+	return out
+}
+
+// toPlacings converts a scoreboard to what the match recorder stores.
+func toPlacings(places []placeMsg) []Placing {
+	out := make([]Placing, len(places))
+	for i, p := range places {
+		out[i] = Placing{Place: p.Place, UserID: p.userID, Name: p.Name}
+	}
+	return out
 }
 
 // quit takes a departing player out of the game they were in.
@@ -285,6 +357,8 @@ func (r *Room) quit(c *client) {
 		return
 	}
 	r.state.Kill(c.snake)
+	// Walking out places you exactly as if you had crashed just now.
+	r.knockouts = append(r.knockouts, []int{c.snake})
 	r.broadcast(encode(tickMsg{Type: "tick", Moves: [][4]int{}, Dead: []int{c.snake}}))
 	c.snake = -1
 	if alive := r.state.Alive(); alive == 0 || (len(r.playing) > 1 && alive <= 1) {

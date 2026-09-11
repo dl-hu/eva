@@ -1,0 +1,35 @@
+<!doctype html>
+<title>EVA — {{.Profile.Name}}</title>
+{{template "style" .}}
+<main class="wide">
+  {{template "nav" .}}
+  <h2>{{.Profile.Name}}</h2>
+  {{if not .Matches}}
+    <p class="err">no matches yet</p>
+  {{end}}
+  <ul>
+    {{$me := .Me}}{{$prefix := .Prefix}}
+    {{range .Matches}}
+      <li>
+        <p class="meta">room <span class="code">{{.Code}}</span> ·
+          {{.Played.Format "2006-01-02 15:04"}} ·
+          <strong>{{.Place}}</strong> of {{.Of}}</p>
+        {{/* The viewer in blue, other account holders in white and linked to
+             their own history, guests in grey and inert. */}}
+        <ol class="places">
+          {{range .Places}}
+            <li value="{{.Place}}">
+              {{- if eq .UserID 0 -}}
+                <span class="player guest">{{.Name}}</span>
+              {{- else -}}
+                <a class="player {{if eq .UserID $me}}me{{else}}user{{end}}"
+                   href="{{$prefix}}/u/{{.Name}}">{{.Name}}</a>
+              {{- end -}}
+            </li>
+          {{end}}
+        </ol>
+      </li>
+    {{end}}
+  </ul>
+  <a class="back" href="{{.Prefix}}/">← back</a>
+</main>

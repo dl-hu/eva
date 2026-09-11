@@ -1,0 +1,18 @@
+<!doctype html>
+<title>EVA — {{.Action}}</title>
+{{template "style" .}}
+<main>
+  <p class="err">{{.Error}}</p>
+  <form method="post" action="{{.Prefix}}/{{.Action}}">
+    <input name="name" maxlength="16" placeholder="account name" autocomplete="username" autofocus>
+    <input name="password" type="password" minlength="8" placeholder="password"
+           autocomplete="{{if eq .Action "signup"}}new-password{{else}}current-password{{end}}">
+    <button>{{.Action}}</button>
+  </form>
+  {{if eq .Action "signup"}}
+    <a class="back" href="{{.Prefix}}/login">already have an account?</a>
+  {{else}}
+    <a class="back" href="{{.Prefix}}/signup">need an account?</a>
+  {{end}}
+  <br><a class="back" href="{{.Prefix}}/">← back</a>
+</main>

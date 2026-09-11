@@ -26,6 +26,23 @@
   .code { color:#2f81f7; letter-spacing:.3em; }
   .back { color:#8b949e; font-size:.9rem; }
   ul { list-style:none; padding:0; }
+  /* A name's colour says who it is: you, someone with an account, or a guest. */
+  .player { text-decoration:none; }
+  .player.me { color:#2f81f7; font-weight:bold; }
+  .player.user { color:#ffffff; }
+  .player.user:hover { text-decoration:underline; }
+  .player.guest { color:#8b949e; cursor:default; }
+  .places { padding-left:2.5rem; margin:.25rem 0 0; }
+  .places li { background:none; border:0; padding:.1rem 0; margin:0; }
+  .nav { display:flex; gap:.5rem; align-items:baseline; justify-content:flex-end;
+         font-size:.9rem; margin:0 0 .5rem; }
+  .nav a { color:#8b949e; }
+  .nav form { margin:0; }
+  .meta { color:#8b949e; font-size:.85rem; margin:0; }
+  h2 { font-size:1.3rem; margin:0 0 .75rem; }
+  button.link { display:inline; width:auto; margin:0; padding:0; border:0;
+                background:none; color:#8b949e; font:inherit; font-size:.9rem;
+                text-decoration:underline; cursor:pointer; }
   li { padding:.5rem .7rem; margin:.25rem 0; background:#161b22;
        border:1px solid #2b3240; border-radius:4px; }
 </style>{{end}}

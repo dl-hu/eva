@@ -22,7 +22,7 @@ func newTestSite(t *testing.T, m *Manager) string {
 			http.Error(w, "no such room", http.StatusNotFound)
 			return
 		}
-		room.Serve(w, r, r.URL.Query().Get("name"))
+		room.Serve(w, r, Player{ID: r.URL.Query().Get("name"), Name: r.URL.Query().Get("name")})
 	})
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
@@ -36,7 +36,7 @@ func TestServeDeliversRoster(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
-	room := m.Create()
+	room := m.Create("host")
 	ada := dial(ctx, t, wsURL, room.Code, "ada")
 	bob := dial(ctx, t, wsURL, room.Code, "bob")
 	awaitWireRoster(ctx, t, ada, "ada", "bob")
@@ -67,7 +67,7 @@ func TestServeOutlivesTheIdleTimer(t *testing.T) {
 	defer cancel()
 
 	for range 50 {
-		room := m.Create()
+		room := m.Create("host")
 		conn, _, err := websocket.Dial(ctx, wsURL+"/ws/"+room.Code+"?name=ada", nil)
 		if err != nil {
 			continue // the room closed first; that is a fair outcome
@@ -100,7 +100,11 @@ func awaitWireRoster(ctx context.Context, t *testing.T, conn *websocket.Conn, wa
 		if err != nil {
 			t.Fatalf("last saw roster %v, want %v: %v", last, want, err)
 		}
-		if last = rosterNames(t, msg); slices.Equal(last, want) {
+		names, ok := rosterNames(t, msg)
+		if !ok {
+			continue // some other message; keep looking
+		}
+		if last = names; slices.Equal(last, want) {
 			return
 		}
 	}

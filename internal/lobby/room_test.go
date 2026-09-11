@@ -18,7 +18,7 @@ func newTestManager(t *testing.T, idle time.Duration) *Manager {
 
 func TestRoomRosterTracksMembership(t *testing.T) {
 	t.Parallel()
-	r := newTestManager(t, time.Minute).Create()
+	r := newTestManager(t, time.Minute).Create("host")
 
 	ada := join(t, r, "ada")
 	bob := join(t, r, "bob")
@@ -31,7 +31,7 @@ func TestRoomRosterTracksMembership(t *testing.T) {
 
 func TestSlowPlayerIsDropped(t *testing.T) {
 	t.Parallel()
-	r := newTestManager(t, time.Minute).Create()
+	r := newTestManager(t, time.Minute).Create("host")
 
 	slow := join(t, r, "slow") // never reads its queue
 	keeping := []*client{join(t, r, "fast")}
@@ -56,7 +56,7 @@ func TestSlowPlayerIsDropped(t *testing.T) {
 func TestRoomClosesWhenIdle(t *testing.T) {
 	t.Parallel()
 	m := newTestManager(t, 50*time.Millisecond)
-	r := m.Create()
+	r := m.Create("host")
 	if _, ok := m.Get(r.Code); !ok {
 		t.Fatalf("Get(%q) = false, want the room just created", r.Code)
 	}
@@ -71,7 +71,7 @@ func TestRoomClosesWhenIdle(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if r.add(&client{name: "late", send: make(chan []byte, 1)}) {
+	if r.add(&client{name: "late", send: make(chan []byte, 1), snake: -1}) {
 		t.Error("joining a closed room = true, want false")
 	}
 }
@@ -79,7 +79,7 @@ func TestRoomClosesWhenIdle(t *testing.T) {
 func TestRoomStaysOpenWhileOccupied(t *testing.T) {
 	t.Parallel()
 	m := newTestManager(t, 50*time.Millisecond)
-	r := m.Create()
+	r := m.Create("host")
 	ada := join(t, r, "ada")
 
 	time.Sleep(5 * m.idleTimeout)
@@ -94,7 +94,7 @@ func TestManagerCreateAssignsUniqueCodes(t *testing.T) {
 	m := NewManager() // the default timeout keeps every room alive for the test
 	seen := make(map[string]bool)
 	for range 100 {
-		r := m.Create()
+		r := m.Create("host")
 		if seen[r.Code] {
 			t.Fatalf("Create().Code = %q, want a code not already in use", r.Code)
 		}
@@ -105,23 +105,55 @@ func TestManagerCreateAssignsUniqueCodes(t *testing.T) {
 	}
 }
 
-// TestRosterWireFormat pins the bytes on the wire. The browser client and the
-// bot loadtester parse this message, so a failure here means they need
+// TestWireFormat pins the bytes on the wire. The browser client in room.html
+// and the bot loadtester parse these, so a failure here means they need
 // updating too — it is not a test to relax.
-func TestRosterWireFormat(t *testing.T) {
+func TestWireFormat(t *testing.T) {
 	t.Parallel()
-	ada, bob := &client{name: "ada"}, &client{name: "bob"}
-	got := string(roster(map[*client]bool{bob: true, ada: true}))
-	want := `{"type":"players","players":["ada","bob"]}`
-	if got != want {
-		t.Errorf("roster message = %s, want %s", got, want)
+	r := newTestManager(t, time.Minute).Create("ada-id")
+	ada := joinAs(t, r, "ada-id", "ada")
+
+	want := []string{
+		`{"type":"you","host":true,"snake":-1}`,
+		`{"type":"players","players":["ada"]}`,
+	}
+	for i, want := range want {
+		if got := recv(t, ada); got != want {
+			t.Errorf("message %d = %s, want %s", i, got, want)
+		}
+	}
+
+	joinAs(t, r, "bob-id", "bob")
+	if got, want := recv(t, ada), `{"type":"players","players":["ada","bob"]}`; got != want {
+		t.Errorf("roster after bob joined = %s, want %s", got, want)
+	}
+}
+
+// recv returns the next message queued for c.
+func recv(t *testing.T, c *client) string {
+	t.Helper()
+	select {
+	case msg, open := <-c.send:
+		if !open {
+			t.Fatalf("%s was dropped, want a message", c.name)
+		}
+		return string(msg)
+	case <-time.After(time.Second):
+		t.Fatalf("%s received no message", c.name)
+		return ""
 	}
 }
 
 // join adds a player to the room, failing the test if the room is gone.
 func join(t *testing.T, r *Room, name string) *client {
 	t.Helper()
-	c := &client{name: name, send: make(chan []byte, sendBuffer)}
+	return joinAs(t, r, name, name)
+}
+
+// joinAs adds a player connecting with a given identity, as the host would.
+func joinAs(t *testing.T, r *Room, id, name string) *client {
+	t.Helper()
+	c := &client{id: id, name: name, send: make(chan []byte, sendBuffer), snake: -1}
 	if !r.add(c) {
 		t.Fatalf("joining room %s as %s = false, want true", r.Code, name)
 	}
@@ -149,7 +181,11 @@ func awaitRoster(t *testing.T, c *client, want ...string) {
 			if !open {
 				t.Fatalf("%s was dropped, want it to see roster %v", c.name, want)
 			}
-			if last = rosterNames(t, msg); slices.Equal(last, want) {
+			names, ok := rosterNames(t, msg)
+			if !ok {
+				continue // some other message; keep looking
+			}
+			if last = names; slices.Equal(last, want) {
 				return
 			}
 		case <-deadline:
@@ -174,8 +210,9 @@ func awaitDropped(t *testing.T, c *client) {
 	}
 }
 
-// rosterNames decodes a roster message into the sorted names it lists.
-func rosterNames(t *testing.T, msg []byte) []string {
+// rosterNames decodes a roster message into the sorted names it lists,
+// reporting false for any other kind of message.
+func rosterNames(t *testing.T, msg []byte) ([]string, bool) {
 	t.Helper()
 	var got struct {
 		Type    string   `json:"type"`
@@ -185,9 +222,9 @@ func rosterNames(t *testing.T, msg []byte) []string {
 		t.Fatalf("unmarshaling %q: %v", msg, err)
 	}
 	if got.Type != "players" {
-		t.Fatalf("message type = %q, want %q", got.Type, "players")
+		return nil, false
 	}
 	names := slices.Clone(got.Players)
 	slices.Sort(names)
-	return names
+	return names, true
 }

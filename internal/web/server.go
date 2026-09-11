@@ -68,8 +68,8 @@ func (s *server) handleForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleCreate(w http.ResponseWriter, r *http.Request) {
-	s.identify(w, r)
-	room := s.rooms.Create()
+	host := s.identify(w, r)
+	room := s.rooms.Create(host.ID)
 	s.redirect(w, r, "/room/"+room.Code, nil)
 }
 
@@ -85,10 +85,10 @@ func (s *server) handleJoin(w http.ResponseWriter, r *http.Request) {
 
 // identify records the name submitted with the form against the requester's
 // session, leaving any account they are signed in to alone.
-func (s *server) identify(w http.ResponseWriter, r *http.Request) {
+func (s *server) identify(w http.ResponseWriter, r *http.Request) player {
 	p, _ := s.players.get(r)
 	p.Name = cleanName(r.FormValue("name"))
-	s.players.set(w, r, s.prefix, p)
+	return s.players.set(w, r, s.prefix, p)
 }
 
 func (s *server) handleRoom(w http.ResponseWriter, r *http.Request) {
@@ -123,7 +123,7 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "who are you?", http.StatusUnauthorized)
 		return
 	}
-	if err := room.Serve(w, r, p.Name); err != nil {
+	if err := room.Serve(w, r, lobby.Player{ID: p.ID, Name: p.Name}); err != nil {
 		log.Printf("room %s: %v", code, err)
 	}
 }

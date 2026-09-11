@@ -1,30 +1,123 @@
 <!doctype html>
 <title>EVA — {{.Code}}</title>
 {{template "style" .}}
-<main>
-  <h1>EVA</h1>
-  <p>room <span class="code">{{.Code}}</span></p>
-  <p id="status">connecting…</p>
+<main class="wide">
+  <p>room <span class="code">{{.Code}}</span> · <span id="status">connecting…</span></p>
+  <div id="controls" hidden>
+    <label>width <input id="w" type="number" min="50" max="1000" value="250"></label>
+    <label>height <input id="h" type="number" min="50" max="1000" value="250"></label>
+    <button id="start">start</button>
+  </div>
+  <canvas id="board" hidden></canvas>
   <ul id="players"></ul>
   <a class="back" href="{{.Prefix}}/">← leave</a>
 </main>
 <script>
   const code = {{.Code}}, name = {{.Name}}, prefix = {{.Prefix}};
-  // The session cookie rides along with the handshake; the server names us.
-  const url = (location.protocol === "https:" ? "wss://" : "ws://") +
-    location.host + prefix + "/ws/" + code;
-  const status = document.getElementById("status");
+  const YOU = "#2f81f7", THEM = "#d8dee9", YOUR_HEAD = "#79c0ff", THEIR_HEAD = "#ffffff";
+  const DEAD = "#f97583", BOARD = "#0b0e13";
+
+  const statusEl = document.getElementById("status");
+  const controls = document.getElementById("controls");
   const list = document.getElementById("players");
-  const ws = new WebSocket(url);
-  ws.onopen = () => status.textContent = "connected as " + name;
-  ws.onclose = () => status.textContent = "disconnected";
-  ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
-    if (msg.type !== "players") return;
-    list.replaceChildren(...msg.players.map((p) => {
-      const li = document.createElement("li");
-      li.textContent = p;
-      return li;
-    }));
+  const canvas = document.getElementById("board");
+  const ctx = canvas.getContext("2d");
+
+  let me = -1, host = false, cell = 0, heads = new Map(), playing = false;
+
+  // The session cookie rides along with the handshake; the server names us.
+  const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") +
+    location.host + prefix + "/ws/" + code);
+  ws.onopen = () => statusEl.textContent = "connected as " + name;
+  ws.onclose = () => { statusEl.textContent = "disconnected"; playing = false; };
+  ws.onmessage = (e) => handle(JSON.parse(e.data));
+
+  function handle(msg) {
+    switch (msg.type) {
+      case "you":
+        me = msg.snake;
+        host = msg.host;
+        controls.hidden = !host;
+        break;
+      case "players":
+        list.replaceChildren(...msg.players.map((p) => {
+          const li = document.createElement("li");
+          li.textContent = p;
+          return li;
+        }));
+        break;
+      case "start":
+        begin(msg);
+        break;
+      case "tick":
+        if (playing) step(msg);
+        break;
+      case "over":
+        playing = false;
+        canvas.hidden = true;
+        controls.hidden = !host; // the host can set up another round
+        statusEl.textContent = msg.winner < 0 ? "nobody made it" : msg.name + " wins";
+        break;
+    }
+  }
+
+  function begin(msg) {
+    cell = Math.max(2, Math.floor(640 / Math.max(msg.w, msg.h)));
+    canvas.width = msg.w * cell;
+    canvas.height = msg.h * cell;
+    canvas.hidden = false;
+    controls.hidden = true;
+    ctx.fillStyle = BOARD;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    heads = new Map();
+    playing = true;
+    statusEl.textContent = "go";
+    msg.snakes.forEach((s, id) => {
+      if (!s.alive) return;
+      head(id, s.x, s.y);
+    });
+  }
+
+  function step(msg) {
+    for (const [id, x, y] of msg.moves) {
+      const was = heads.get(id);
+      if (was) paint(id, was[0], was[1]); // last tick's head is wall now
+      head(id, x, y);
+    }
+    for (const id of msg.dead || []) {
+      const was = heads.get(id);
+      if (was) fill(was[0], was[1], DEAD);
+      heads.delete(id);
+      if (id === me) statusEl.textContent = "you crashed";
+    }
+  }
+
+  const fill = (x, y, color) => {
+    ctx.fillStyle = color;
+    ctx.fillRect(x * cell, y * cell, cell, cell);
   };
+  const paint = (id, x, y) => fill(x, y, id === me ? YOU : THEM);
+
+  // head marks where the snake is now, in a brighter shade than its wall.
+  function head(id, x, y) {
+    heads.set(id, [x, y]);
+    fill(x, y, id === me ? YOUR_HEAD : THEIR_HEAD);
+  }
+
+  document.getElementById("start").onclick = () => ws.send(JSON.stringify({
+    type: "start",
+    w: +document.getElementById("w").value,
+    h: +document.getElementById("h").value,
+  }));
+
+  const keys = {
+    ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right",
+    w: "up", s: "down", a: "left", d: "right",
+  };
+  addEventListener("keydown", (e) => {
+    const dir = keys[e.key];
+    if (!dir || !playing) return;
+    e.preventDefault();
+    ws.send(JSON.stringify({type: "dir", dir}));
+  });
 </script>

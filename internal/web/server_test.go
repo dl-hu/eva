@@ -112,7 +112,7 @@ func TestNameStaysOffTheURL(t *testing.T) {
 func TestSharedLinkAsksWhoYouAre(t *testing.T) {
 	t.Parallel()
 	s := newTestSite(t, "/eva")
-	room := s.rooms.Create()
+	room := s.rooms.Create("host")
 
 	stranger := s.browser(t)
 	resp := get(t, stranger, s.base+"/room/"+room.Code)
@@ -163,7 +163,7 @@ func TestUnknownCodeReturnsToJoin(t *testing.T) {
 func TestWebsocketRequiresAName(t *testing.T) {
 	t.Parallel()
 	s := newTestSite(t, "/eva")
-	room := s.rooms.Create()
+	room := s.rooms.Create("host")
 	tests := []struct {
 		name string
 		path string
@@ -190,7 +190,7 @@ func TestPrefixedLinksStayUnderPrefix(t *testing.T) {
 	s := newTestSite(t, "/eva")
 	ada := s.browser(t)
 	postForm(t, ada, s.base+"/create", url.Values{"name": {"ada"}})
-	room := s.rooms.Create()
+	room := s.rooms.Create("host")
 
 	tests := []struct {
 		page  string

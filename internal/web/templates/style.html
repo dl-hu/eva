@@ -1,8 +1,19 @@
 {{define "style"}}<meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
+  /* Author display rules below outrank the UA sheet's [hidden]; win it back. */
+  [hidden] { display:none !important; }
   body { background:#0e1116; color:#d8dee9; font:16px ui-monospace, monospace;
          display:grid; place-items:center; min-height:100vh; margin:0; }
   main { width:min(22rem, 90vw); }
+  main.wide { width:min(44rem, 94vw); }
+  #controls { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
+  #controls label { color:#8b949e; font-size:.9rem; }
+  #controls input { width:5rem; display:inline-block; margin:0 0 0 .25rem;
+                    appearance:textfield; }
+  #controls input::-webkit-inner-spin-button { appearance:none; }
+  #controls button { width:auto; padding:.5rem 1.5rem; margin:0; }
+  canvas { display:block; max-width:100%; border:1px solid #2b3240;
+           border-radius:4px; margin:.75rem 0; image-rendering:pixelated; }
   h1 { letter-spacing:.4em; font-size:2.5rem; margin:0 0 1.5rem; }
   input, button, .btn { display:block; width:100%; box-sizing:border-box;
                         padding:.7rem; margin:.5rem 0; font:inherit;

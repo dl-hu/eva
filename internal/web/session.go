@@ -17,7 +17,10 @@ const (
 
 // player is who the server takes a request to be coming from. UserID is zero
 // for a guest; signing in fills it, and only those matches are worth recording.
+// ID names the player to the game and outlives any rename, so a host who
+// refreshes the page is still the host.
 type player struct {
+	ID     string
 	Name   string
 	UserID int64
 	expiry time.Time
@@ -61,8 +64,12 @@ func (s *sessions) get(r *http.Request) (player, bool) {
 
 // set stores p and hands the browser the token naming it, reusing the token
 // the request arrived with so that renaming does not leak a session per visit.
-func (s *sessions) set(w http.ResponseWriter, r *http.Request, prefix string, p player) {
+// It returns the stored player, which carries the ID if one was just minted.
+func (s *sessions) set(w http.ResponseWriter, r *http.Request, prefix string, p player) player {
 	p.expiry = time.Now().Add(sessionTTL)
+	if p.ID == "" {
+		p.ID = rand.Text()
+	}
 
 	s.mu.Lock()
 	token := ""
@@ -88,4 +95,5 @@ func (s *sessions) set(w http.ResponseWriter, r *http.Request, prefix string, p 
 		SameSite: http.SameSiteLaxMode,
 		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
 	})
+	return p
 }

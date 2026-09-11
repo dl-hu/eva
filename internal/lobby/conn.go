@@ -2,7 +2,9 @@ package lobby
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -13,19 +15,23 @@ const (
 	// pingInterval keeps idle connections alive through proxies.
 	pingInterval = 30 * time.Second
 	writeTimeout = 5 * time.Second
+	// readLimit caps an inbound message. Players send turns, not payloads.
+	readLimit = 256
 )
 
 // ErrRoomClosed is returned when a player arrives after the room has shut down.
 var ErrRoomClosed = errors.New("room closed")
 
-// Serve upgrades req to a websocket, joins the room as name, and blocks until
-// the player disconnects. A clean disconnect returns a nil error.
-func (r *Room) Serve(w http.ResponseWriter, req *http.Request, name string) error {
+// Serve upgrades req to a websocket, joins the room as p, and blocks until the
+// player disconnects. A clean disconnect returns a nil error.
+func (r *Room) Serve(w http.ResponseWriter, req *http.Request, p Player) error {
 	conn, err := websocket.Accept(w, req, nil)
 	if err != nil {
 		return err // Accept has already replied
 	}
-	c := &client{name: name, send: make(chan []byte, sendBuffer)}
+	conn.SetReadLimit(readLimit)
+
+	c := &client{id: p.ID, name: p.Name, send: make(chan []byte, sendBuffer), snake: -1}
 	if !r.add(c) {
 		conn.Close(websocket.StatusGoingAway, "room closed")
 		return ErrRoomClosed
@@ -36,14 +42,24 @@ func (r *Room) Serve(w http.ResponseWriter, req *http.Request, name string) erro
 	defer cancel()
 	go c.writeLoop(ctx, conn)
 	for {
-		// ponytail: player input is read and discarded until game logic lands.
-		if _, _, err := conn.Read(ctx); err != nil {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
 			switch websocket.CloseStatus(err) {
 			case websocket.StatusNormalClosure, websocket.StatusGoingAway:
 				return nil
 			}
+			// A closed tab or a dropped network ends a connection without
+			// ceremony. That is ordinary, not something to log per player.
+			if errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
+				return nil
+			}
 			return err
 		}
+		var msg clientMsg
+		if err := json.Unmarshal(data, &msg); err != nil {
+			continue // ignore anything we cannot read
+		}
+		r.send(input{c: c, msg: msg})
 	}
 }
 

@@ -3,6 +3,7 @@
 !/.gitignore
 
 !*.go
+!*.html
 !go.sum
 !go.mod
 

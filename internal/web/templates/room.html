@@ -1,0 +1,30 @@
+<!doctype html>
+<title>EVA — {{.Code}}</title>
+{{template "style" .}}
+<main>
+  <h1>EVA</h1>
+  <p>room <span class="code">{{.Code}}</span></p>
+  <p id="status">connecting…</p>
+  <ul id="players"></ul>
+  <a class="back" href="{{.Prefix}}/">← leave</a>
+</main>
+<script>
+  const code = {{.Code}}, name = {{.Name}}, prefix = {{.Prefix}};
+  // The session cookie rides along with the handshake; the server names us.
+  const url = (location.protocol === "https:" ? "wss://" : "ws://") +
+    location.host + prefix + "/ws/" + code;
+  const status = document.getElementById("status");
+  const list = document.getElementById("players");
+  const ws = new WebSocket(url);
+  ws.onopen = () => status.textContent = "connected as " + name;
+  ws.onclose = () => status.textContent = "disconnected";
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type !== "players") return;
+    list.replaceChildren(...msg.players.map((p) => {
+      const li = document.createElement("li");
+      li.textContent = p;
+      return li;
+    }));
+  };
+</script>

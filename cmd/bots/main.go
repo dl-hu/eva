@@ -171,7 +171,7 @@ func newBot(base, code, name string) (*bot, error) {
 		return nil, fmt.Errorf("joining: ended at %s", resp.Request.URL)
 	}
 	b.code = got[i+len("/room/"):]
-	b.wsURL = strings.Replace(base, "http", "ws", 1) + got[:i] + "/ws/" + b.code
+	b.wsURL = strings.Replace(base, "http", "ws", 1) + "/ws/" + b.code
 	return b, nil
 }
 

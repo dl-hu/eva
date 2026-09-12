@@ -23,12 +23,22 @@ const (
 	tickRate = 40 * time.Millisecond
 )
 
-// Player is who a connection belongs to. The ID is stable across reconnects,
-// so a host who refreshes the page is still the host. UserID is zero for a
-// guest, who plays the same game but leaves no record of it.
+// Player is who a connection belongs to.
 type Player struct {
-	ID     string
-	Name   string
+	// SessionID identifies the browser session, guest or not. It is stable
+	// across reconnects, so a host who refreshes the page is still the host,
+	// and it dies with the session. It is not the session cookie, and nothing
+	// sends it to a client.
+	SessionID string
+
+	// Name is what the room shows everyone. A guest picks it, so on its own it
+	// proves nothing: a guest may well type the name of somebody's account.
+	Name string
+
+	// UserID is the account that proved it owns Name, and zero for a guest.
+	// Being the only field that outlives the session, it is what a match is
+	// filed under — and being proof rather than a claim, it is what allows Name
+	// to be shown as a link to that history. See account.
 	UserID int64
 }
 
@@ -57,7 +67,7 @@ func NewManager() *Manager {
 	return &Manager{idleTimeout: defaultIdleTimeout, rooms: make(map[string]*Room)}
 }
 
-// Create starts a room under a fresh code, hosted by the player named by hostID.
+// Create starts a room under a fresh code, hosted by the session named by hostID.
 func (m *Manager) Create(hostID string) *Room {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -106,7 +116,7 @@ func newCode() string {
 // fields; they talk to run over the channels instead.
 type Room struct {
 	Code   string
-	hostID string
+	hostID string // the session that may start games here
 
 	mgr   *Manager
 	join  chan *client
@@ -115,6 +125,7 @@ type Room struct {
 	done  chan struct{}
 
 	clients map[*client]bool
+	seats   int // seats handed out, so each connection has its own number
 	state   *game.State
 	playing []*client // snake number to the player driving it
 	ticker  *time.Ticker
@@ -125,11 +136,27 @@ type Room struct {
 
 // client is one connected player as the room sees it.
 type client struct {
-	id     string
-	name   string
-	userID int64
-	send   chan []byte
-	snake  int // its snake in the running game, -1 when not playing
+	sessionID string
+	name      string
+	userID    int64
+	send      chan []byte
+	seat      int // its place in the roster, for as long as it is connected
+	snake     int // its snake in the running game, -1 when not playing
+}
+
+// account is the name c's match history is filed under, and empty for a guest.
+// It is c.name only once the session has proved the account is theirs, which is
+// what keeps a guest who types somebody else's name from being shown as them.
+func (c *client) account() string {
+	if c.userID == 0 {
+		return ""
+	}
+	return c.name
+}
+
+// roster is how c appears in the lobby list.
+func (c *client) roster() rosterPlayer {
+	return rosterPlayer{Seat: c.seat, Name: c.name, User: c.account()}
 }
 
 // input is something a player sent.
@@ -191,7 +218,9 @@ func (r *Room) run() {
 		select {
 		case c := <-r.join:
 			r.clients[c] = true
-			r.unicast(c, encode(youMsg{Type: "you", Host: c.id == r.hostID, Snake: -1}))
+			c.seat = r.seats
+			r.seats++
+			r.unicast(c, encode(youMsg{Type: "you", Host: c.sessionID == r.hostID, Snake: -1, Seat: c.seat}))
 			r.broadcastRoster()
 		case c := <-r.leave:
 			if !r.clients[c] {
@@ -237,7 +266,7 @@ func (r *Room) handle(in input) {
 // start begins a game at the host's request, on a board of the size they
 // asked for. Only the host may start one, and only when none is running.
 func (r *Room) start(c *client, w, h int) {
-	if c.id != r.hostID || r.state != nil || len(r.clients) == 0 {
+	if c.sessionID != r.hostID || r.state != nil || len(r.clients) == 0 {
 		return
 	}
 	w, h = clampSize(w), clampSize(h)
@@ -256,7 +285,7 @@ func (r *Room) start(c *client, w, h int) {
 		c.snake = i
 		sn := r.state.Snakes[i]
 		msg.Snakes[i] = startSnake{Name: c.name, X: sn.Head.X, Y: sn.Head.Y, Dir: int(sn.Dir), Alive: sn.Alive}
-		r.unicast(c, encode(youMsg{Type: "you", Host: c.id == r.hostID, Snake: i}))
+		r.unicast(c, encode(youMsg{Type: "you", Host: c.sessionID == r.hostID, Snake: i, Seat: c.seat}))
 	}
 	r.broadcast(encode(msg))
 	r.ticker = time.NewTicker(tickRate)
@@ -331,11 +360,8 @@ func (r *Room) scoreboard() []placeMsg {
 				continue // a snake nobody is driving; should not happen
 			}
 			c := r.playing[snake]
-			p := placeMsg{Place: place, Snake: snake, Name: c.name, userID: c.userID}
-			if c.userID != 0 {
-				p.User = c.name // signed in, so the display name is the account
-			}
-			out = append(out, p)
+			out = append(out, placeMsg{Place: place, Snake: snake,
+				Name: c.name, User: c.account(), userID: c.userID})
 		}
 		place += len(g) // ties all took this place; the next one skips past them
 	}
@@ -404,10 +430,14 @@ func (r *Room) broadcast(msg []byte) {
 // ponytail: a full roster per join is O(n) per event, fine for a lobby of
 // tens. Fold it into the tick once rooms hold thousands.
 func (r *Room) broadcastRoster() {
-	names := make([]string, 0, len(r.clients))
+	players := make([]rosterPlayer, 0, len(r.clients))
 	for c := range r.clients {
-		names = append(names, c.name)
+		players = append(players, c.roster())
 	}
-	slices.Sort(names)
-	r.broadcast(encode(rosterMsg{Type: "players", Players: names}))
+	// Map order is random; list by name, and by seat between namesakes, so the
+	// roster does not reshuffle itself under the reader on every update.
+	slices.SortFunc(players, func(a, b rosterPlayer) int {
+		return cmp.Or(cmp.Compare(a.Name, b.Name), cmp.Compare(a.Seat, b.Seat))
+	})
+	r.broadcast(encode(rosterMsg{Type: "players", Players: players}))
 }

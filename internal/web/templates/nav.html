@@ -3,6 +3,7 @@
     <a class="player me" href="{{.Prefix}}/u/{{.User}}">{{.User}}</a>
     <form method="post" action="{{.Prefix}}/logout"><button class="link">log out</button></form>
   {{else}}
-    <a href="{{.Prefix}}/login">log in</a> · <a href="{{.Prefix}}/signup">sign up</a>
+    {{/* One flex item, so the column keeps these two on a line together. */}}
+    <span><a href="{{.Prefix}}/login">log in</a> · <a href="{{.Prefix}}/signup">sign up</a></span>
   {{end}}
 </p>{{end}}

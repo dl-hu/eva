@@ -34,7 +34,8 @@
   .player.guest { color:#8b949e; cursor:default; }
   .places { padding-left:2.5rem; margin:.25rem 0 0; }
   .places li { background:none; border:0; padding:.1rem 0; margin:0; }
-  .nav { display:flex; gap:.5rem; align-items:baseline; justify-content:flex-end;
+  /* Stacked at the top right: who you are, and under it the way out. */
+  .nav { display:flex; flex-direction:column; align-items:flex-end; gap:.15rem;
          font-size:.9rem; margin:0 0 .5rem; }
   .nav a { color:#8b949e; }
   .nav form { margin:0; }

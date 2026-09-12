@@ -114,8 +114,8 @@ func TestWireFormat(t *testing.T) {
 	ada := joinAs(t, r, "ada-id", "ada")
 
 	want := []string{
-		`{"type":"you","host":true,"snake":-1}`,
-		`{"type":"players","players":["ada"]}`,
+		`{"type":"you","host":true,"snake":-1,"seat":0}`,
+		`{"type":"players","players":[{"seat":0,"name":"ada"}]}`,
 	}
 	for i, want := range want {
 		if got := recv(t, ada); got != want {
@@ -124,8 +124,20 @@ func TestWireFormat(t *testing.T) {
 	}
 
 	joinAs(t, r, "bob-id", "bob")
-	if got, want := recv(t, ada), `{"type":"players","players":["ada","bob"]}`; got != want {
-		t.Errorf("roster after bob joined = %s, want %s", got, want)
+	want1 := `{"type":"players","players":[{"seat":0,"name":"ada"},{"seat":1,"name":"bob"}]}`
+	if got := recv(t, ada); got != want1 {
+		t.Errorf("roster after bob joined = %s, want %s", got, want1)
+	}
+
+	// A signed-in player carries the account their name links to.
+	signedIn := &client{sessionID: "cy-id", name: "cy", userID: 7, send: make(chan []byte, sendBuffer), snake: -1}
+	if !r.add(signedIn) {
+		t.Fatal("joining as cy = false, want true")
+	}
+	want2 := `{"type":"players","players":[{"seat":0,"name":"ada"},{"seat":1,"name":"bob"},` +
+		`{"seat":2,"name":"cy","user":"cy"}]}`
+	if got := recv(t, ada); got != want2 {
+		t.Errorf("roster after cy joined = %s, want %s", got, want2)
 	}
 }
 
@@ -153,7 +165,7 @@ func join(t *testing.T, r *Room, name string) *client {
 // joinAs adds a player connecting with a given identity, as the host would.
 func joinAs(t *testing.T, r *Room, id, name string) *client {
 	t.Helper()
-	c := &client{id: id, name: name, send: make(chan []byte, sendBuffer), snake: -1}
+	c := &client{sessionID: id, name: name, send: make(chan []byte, sendBuffer), snake: -1}
 	if !r.add(c) {
 		t.Fatalf("joining room %s as %s = false, want true", r.Code, name)
 	}
@@ -215,8 +227,10 @@ func awaitDropped(t *testing.T, c *client) {
 func rosterNames(t *testing.T, msg []byte) ([]string, bool) {
 	t.Helper()
 	var got struct {
-		Type    string   `json:"type"`
-		Players []string `json:"players"`
+		Type    string `json:"type"`
+		Players []struct {
+			Name string `json:"name"`
+		} `json:"players"`
 	}
 	if err := json.Unmarshal(msg, &got); err != nil {
 		t.Fatalf("unmarshaling %q: %v", msg, err)
@@ -224,7 +238,10 @@ func rosterNames(t *testing.T, msg []byte) ([]string, bool) {
 	if got.Type != "players" {
 		return nil, false
 	}
-	names := slices.Clone(got.Players)
+	var names []string
+	for _, p := range got.Players {
+		names = append(names, p.Name)
+	}
 	slices.Sort(names)
 	return names, true
 }

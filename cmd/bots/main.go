@@ -28,10 +28,12 @@ import (
 // The wire protocol, from internal/lobby/proto.go. Only the fields a bot acts
 // on are named here.
 type serverMsg struct {
-	Type    string   `json:"type"`
-	Snake   int      `json:"snake"`   // "you"
-	Players []string `json:"players"` // "players"
-	Snakes  []struct {
+	Type    string `json:"type"`
+	Snake   int    `json:"snake"` // "you"
+	Players []struct {
+		Name string `json:"name"`
+	} `json:"players"` // "players": only its length matters to a bot
+	Snakes []struct {
 		Dir int `json:"dir"`
 	} `json:"snakes"` // "start"
 	Moves [][4]int `json:"moves"` // "tick": snake, x, y, dir

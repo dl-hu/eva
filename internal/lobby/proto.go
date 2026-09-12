@@ -17,8 +17,9 @@ import (
 //
 // From the server:
 //
-//	{"type":"you","host":true,"snake":3}          who this connection is
-//	{"type":"players","players":["ada","bob"]}    lobby roster
+//	{"type":"you","host":true,"snake":3,"seat":0} who this connection is
+//	{"type":"players","players":[                 lobby roster
+//	 {"seat":0,"name":"ada","user":"ada"},{"seat":1,"name":"bob"}]}
 //	{"type":"start","w":50,"h":50,"snakes":[…]}   a game begins
 //	{"type":"tick","moves":[[3,10,4,1]],"dead":[]} one step: snake, x, y, dir
 //	{"type":"over","winner":3,"name":"ada",       last snake standing, and
@@ -42,11 +43,24 @@ type youMsg struct {
 	Type  string `json:"type"`
 	Host  bool   `json:"host"`
 	Snake int    `json:"snake"` // -1 until a game starts
+	Seat  int    `json:"seat"`  // which roster entry is this connection
+}
+
+// rosterPlayer is one player in the lobby. Seat names the connection, so a
+// client can pick itself out of a roster holding two players under the same
+// display name.
+type rosterPlayer struct {
+	Seat int    `json:"seat"`
+	Name string `json:"name"` // what to show, whoever they are
+	// User is the account Name belongs to, and absent for a guest, so it is what
+	// decides whether a client may link a name to a history. It comes from
+	// client.account, never from Name.
+	User string `json:"user,omitempty"`
 }
 
 type rosterMsg struct {
-	Type    string   `json:"type"`
-	Players []string `json:"players"`
+	Type    string         `json:"type"`
+	Players []rosterPlayer `json:"players"`
 }
 
 // startSnake is a snake's opening position, indexed by snake number.
@@ -73,9 +87,8 @@ type tickMsg struct {
 	Dead  []int    `json:"dead,omitempty"`
 }
 
-// placeMsg is one line of the end-of-match scoreboard. User carries the
-// account name when the player has one, which is what makes their name a link
-// to their history; a guest sends no User at all.
+// placeMsg is one line of the end-of-match scoreboard. Name and User split the
+// same way they do in rosterPlayer: Name is shown, User is what may be linked.
 type placeMsg struct {
 	Place int    `json:"place"`
 	Snake int    `json:"snake"`

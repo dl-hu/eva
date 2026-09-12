@@ -22,7 +22,7 @@ func newTestSite(t *testing.T, m *Manager) string {
 			http.Error(w, "no such room", http.StatusNotFound)
 			return
 		}
-		room.Serve(w, r, Player{ID: r.URL.Query().Get("name"), Name: r.URL.Query().Get("name")})
+		room.Serve(w, r, Player{SessionID: r.URL.Query().Get("name"), Name: r.URL.Query().Get("name")})
 	})
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)

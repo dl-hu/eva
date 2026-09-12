@@ -26,7 +26,7 @@
   const results = document.getElementById("results");
   const ctx = canvas.getContext("2d");
 
-  let me = -1, host = false, cell = 0, heads = new Map(), playing = false;
+  let me = -1, seat = -1, host = false, cell = 0, heads = new Map(), playing = false;
 
   // The session cookie rides along with the handshake; the server names us.
   const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") +
@@ -39,13 +39,14 @@
     switch (msg.type) {
       case "you":
         me = msg.snake;
+        seat = msg.seat;
         host = msg.host;
         controls.hidden = !host;
         break;
       case "players":
         list.replaceChildren(...msg.players.map((p) => {
           const li = document.createElement("li");
-          li.textContent = p;
+          li.append(playerEl(p, p.seat === seat));
           return li;
         }));
         break;
@@ -65,26 +66,32 @@
     }
   }
 
-  // showResults lists the finishing order: you in blue, other account holders
-  // in white and linked to their history, guests in grey and inert.
+  // playerEl renders one name, in the lobby roster or the scoreboard: you in
+  // blue, other account holders in white and linked to their history, guests in
+  // grey and inert.
+  function playerEl(p, mine) {
+    let el;
+    if (mine) {
+      el = document.createElement("span");
+      el.className = "player me";
+    } else if (p.user) {
+      el = document.createElement("a");
+      el.className = "player user";
+      el.href = prefix + "/u/" + encodeURIComponent(p.user);
+    } else {
+      el = document.createElement("span");
+      el.className = "player guest";
+    }
+    el.textContent = p.name; // textContent, so a chosen name cannot be markup
+    return el;
+  }
+
+  // showResults lists the finishing order.
   function showResults(places) {
     results.replaceChildren(...places.map((p) => {
       const li = document.createElement("li");
       li.value = p.place;
-      let el;
-      if (p.snake === me) {
-        el = document.createElement("span");
-        el.className = "player me";
-      } else if (p.user) {
-        el = document.createElement("a");
-        el.className = "player user";
-        el.href = prefix + "/u/" + encodeURIComponent(p.user);
-      } else {
-        el = document.createElement("span");
-        el.className = "player guest";
-      }
-      el.textContent = p.name; // textContent, so a chosen name cannot be markup
-      li.append(el);
+      li.append(playerEl(p, p.snake === me));
       return li;
     }));
     results.hidden = places.length === 0;

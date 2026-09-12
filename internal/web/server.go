@@ -89,7 +89,7 @@ func (s *server) handleForm(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	host := s.identify(w, r)
-	room := s.rooms.Create(host.ID)
+	room := s.rooms.Create(host.SessionID)
 	s.redirect(w, r, "/room/"+room.Code, nil)
 }
 
@@ -168,7 +168,7 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "who are you?", http.StatusUnauthorized)
 		return
 	}
-	if err := room.Serve(w, r, lobby.Player{ID: p.ID, Name: p.Name, UserID: p.UserID}); err != nil {
+	if err := room.Serve(w, r, lobby.Player{SessionID: p.SessionID, Name: p.Name, UserID: p.UserID}); err != nil {
 		log.Printf("room %s: %v", code, err)
 	}
 }

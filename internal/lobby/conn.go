@@ -31,7 +31,7 @@ func (r *Room) Serve(w http.ResponseWriter, req *http.Request, p Player) error {
 	}
 	conn.SetReadLimit(readLimit)
 
-	c := &client{id: p.ID, name: p.Name, userID: p.UserID, send: make(chan []byte, sendBuffer), snake: -1}
+	c := &client{sessionID: p.SessionID, name: p.Name, userID: p.UserID, send: make(chan []byte, sendBuffer), snake: -1}
 	if !r.add(c) {
 		conn.Close(websocket.StatusGoingAway, "room closed")
 		return ErrRoomClosed

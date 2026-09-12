@@ -17,13 +17,15 @@ const (
 
 // player is who the server takes a request to be coming from. UserID is zero
 // for a guest; signing in fills it, and only those matches are worth recording.
-// ID names the player to the game and outlives any rename, so a host who
-// refreshes the page is still the host.
+// SessionID names the player to the game and outlives any rename, so a host who
+// refreshes the page is still the host. It is minted here, never leaves the
+// server, and is not the cookie token: that is the key this player is stored
+// under.
 type player struct {
-	ID     string
-	Name   string
-	UserID int64
-	expiry time.Time
+	SessionID string
+	Name      string
+	UserID    int64
+	expiry    time.Time
 }
 
 // guest reports whether p is playing without an account.
@@ -67,8 +69,8 @@ func (s *sessions) get(r *http.Request) (player, bool) {
 // It returns the stored player, which carries the ID if one was just minted.
 func (s *sessions) set(w http.ResponseWriter, r *http.Request, prefix string, p player) player {
 	p.expiry = time.Now().Add(sessionTTL)
-	if p.ID == "" {
-		p.ID = rand.Text()
+	if p.SessionID == "" {
+		p.SessionID = rand.Text()
 	}
 
 	s.mu.Lock()

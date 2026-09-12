@@ -3,9 +3,13 @@
 !/.gitignore
 
 !*.go
-!*.html
 !go.sum
 !go.mod
+
+!*.html
+
+!Caddyfile
+!*.service
 
 !README.md
 !LICENSE

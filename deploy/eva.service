@@ -1,0 +1,15 @@
+[Unit]
+Description=eva game server
+After=network-online.target
+
+[Service]
+# Loopback only: Caddy is the one thing that should be able to reach it, so
+# there is no way in that skips TLS.
+ExecStart=/usr/local/bin/eva -addr 127.0.0.1:8080 -prefix /eva -db /var/lib/eva/eva.db
+DynamicUser=yes
+StateDirectory=eva
+Restart=always
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

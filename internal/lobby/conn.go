@@ -25,6 +25,8 @@ var ErrRoomClosed = errors.New("room closed")
 // Serve upgrades req to a websocket, joins the room as p, and blocks until the
 // player disconnects. A clean disconnect returns a nil error.
 func (r *Room) Serve(w http.ResponseWriter, req *http.Request, p Player) error {
+	r.mgr.wg.Add(1)
+	defer r.mgr.wg.Done()
 	conn, err := websocket.Accept(w, req, nil)
 	if err != nil {
 		return err // Accept has already replied
@@ -40,7 +42,8 @@ func (r *Room) Serve(w http.ResponseWriter, req *http.Request, p Player) error {
 
 	ctx, cancel := context.WithCancel(req.Context())
 	defer cancel()
-	go c.writeLoop(ctx, conn)
+	// Tracked, so Close waits for the close frame to reach the player.
+	r.mgr.wg.Go(func() { c.writeLoop(ctx, conn) })
 	for {
 		_, data, err := conn.Read(ctx)
 		if err != nil {

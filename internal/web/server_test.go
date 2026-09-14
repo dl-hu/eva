@@ -1,15 +1,22 @@
 package web
 
 import (
+	"bytes"
+	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
+
+	"github.com/coder/websocket"
 
 	"dlhu.dev/eva/internal/lobby"
 	"dlhu.dev/eva/internal/store"
@@ -300,4 +307,56 @@ func bodyOf(t *testing.T, resp *http.Response) string {
 		t.Fatalf("reading %s: %v", resp.Request.URL, err)
 	}
 	return string(body)
+}
+
+// TestRequestsAreLogged checks that the logging wrapper sees each response's
+// status and, above all, still lets a websocket upgrade through it. It swaps
+// the default logger, so it must not run in parallel.
+func TestRequestsAreLogged(t *testing.T) {
+	var out lockedBuffer
+	defer slog.SetDefault(slog.Default())
+	slog.SetDefault(slog.New(slog.NewTextHandler(&out, nil)))
+
+	s := newTestSite(t, "/eva")
+	ada := s.browser(t)
+	resp := postForm(t, ada, s.base+"/create", url.Values{"name": {"ada"}})
+	code := strings.TrimPrefix(resp.Request.URL.Path, "/eva/room/")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, s.base+"/ws/"+code, &websocket.DialOptions{HTTPClient: ada})
+	if err != nil {
+		t.Fatalf("websocket through the logging wrapper: %v", err)
+	}
+	conn.Close(websocket.StatusNormalClosure, "")
+
+	for _, want := range []string{
+		"method=POST path=/eva/create status=303",
+		"method=GET path=/eva/ws/" + code + " status=101",
+	} {
+		for !strings.Contains(out.String(), want) {
+			if ctx.Err() != nil {
+				t.Fatalf("no log line with %q in:\n%s", want, out.String())
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+// lockedBuffer is a bytes.Buffer safe to log into from many goroutines.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (lb *lockedBuffer) Write(p []byte) (int, error) {
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
+	return lb.b.Write(p)
+}
+
+func (lb *lockedBuffer) String() string {
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
+	return lb.b.String()
 }

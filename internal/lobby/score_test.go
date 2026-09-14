@@ -31,8 +31,11 @@ func TestFinishedGameIsRecorded(t *testing.T) {
 		}
 	}
 	r := m.Create("host-id")
-	host := joinAs(t, r, "host-id", "ada")
-	host.userID = 7
+	// Signed in before joining: once the room has the client, run owns it.
+	host := &client{sessionID: "host-id", name: "ada", userID: 7, send: make(chan []byte, sendBuffer), snake: -1}
+	if !r.add(host) {
+		t.Fatal("joining the room = false, want true")
+	}
 
 	// The smallest board: a lone snake drives into the edge within a second.
 	r.send(input{c: host, msg: clientMsg{Type: "start", W: game.MinSize, H: game.MinSize}})

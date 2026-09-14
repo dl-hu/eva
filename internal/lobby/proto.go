@@ -2,7 +2,8 @@ package lobby
 
 import (
 	"encoding/json"
-	"log"
+	"fmt"
+	"log/slog"
 
 	"dlhu.dev/eva/internal/game"
 )
@@ -109,7 +110,7 @@ type overMsg struct {
 func encode(msg any) []byte {
 	b, err := json.Marshal(msg)
 	if err != nil {
-		log.Printf("encoding %T: %v", msg, err)
+		slog.Error("encoding message", "type", fmt.Sprintf("%T", msg), "err", err)
 		return nil
 	}
 	return b

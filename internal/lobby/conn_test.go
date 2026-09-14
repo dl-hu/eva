@@ -109,3 +109,41 @@ func awaitWireRoster(ctx context.Context, t *testing.T, conn *websocket.Conn, wa
 		}
 	}
 }
+
+// TestCloseDisconnectsPlayersCleanly covers shutdown: every player gets a close
+// frame rather than a dropped connection, and Close waits until they have.
+func TestCloseDisconnectsPlayersCleanly(t *testing.T) {
+	t.Parallel()
+	m := newTestManager(t, time.Minute)
+	wsURL := newTestSite(t, m)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	room := m.Create("host")
+	ada := dial(ctx, t, wsURL, room.Code, "ada")
+	awaitWireRoster(ctx, t, ada, "ada")
+
+	closed := make(chan struct{})
+	go func() {
+		m.Close()
+		close(closed)
+	}()
+	for {
+		_, _, err := ada.Read(ctx) // reading is what answers the close handshake
+		if err == nil {
+			continue
+		}
+		if got := websocket.CloseStatus(err); got != websocket.StatusNormalClosure {
+			t.Fatalf("connection ended with %v, want a normal close", err)
+		}
+		break
+	}
+	select {
+	case <-closed:
+	case <-ctx.Done():
+		t.Fatal("Close never returned")
+	}
+	if _, ok := m.Get(room.Code); ok {
+		t.Error("room still listed after Close")
+	}
+}

@@ -245,3 +245,21 @@ func rosterNames(t *testing.T, msg []byte) ([]string, bool) {
 	slices.Sort(names)
 	return names, true
 }
+
+// TestRoomCrashClosesOnlyThatRoom keeps a bug in one game from taking down
+// every room on the server.
+func TestRoomCrashClosesOnlyThatRoom(t *testing.T) {
+	t.Parallel()
+	m := newTestManager(t, time.Minute)
+	crashing, healthy := m.Create("host"), m.Create("host")
+	ada := join(t, crashing, "ada")
+
+	crashing.send(input{msg: clientMsg{Type: "start"}}) // no client: start panics
+	awaitDropped(t, ada)
+	if _, ok := m.Get(crashing.Code); ok {
+		t.Error("crashed room still listed")
+	}
+
+	bob := join(t, healthy, "bob")
+	awaitRoster(t, bob, "bob")
+}

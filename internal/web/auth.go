@@ -2,7 +2,7 @@ package web
 
 import (
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path"
@@ -69,7 +69,7 @@ func (s *server) authFailed(w http.ResponseWriter, r *http.Request, form string,
 		}
 	}
 	if msg == "something went wrong, try again" {
-		log.Printf("auth %s: %v", form, err)
+		slog.Error("auth", "form", form, "err", err)
 	}
 	s.redirect(w, r, form, url.Values{"error": {msg}})
 }
@@ -83,13 +83,13 @@ func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		log.Printf("history lookup: %v", err)
+		slog.Error("history lookup", "name", r.PathValue("name"), "err", err)
 		http.Error(w, "cannot read that history", http.StatusInternalServerError)
 		return
 	}
 	matches, err := s.db.History(u.ID, historyLimit)
 	if err != nil {
-		log.Printf("history for %d: %v", u.ID, err)
+		slog.Error("history", "user", u.ID, "err", err)
 		http.Error(w, "cannot read that history", http.StatusInternalServerError)
 		return
 	}

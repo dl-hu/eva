@@ -2,13 +2,15 @@
 package web
 
 import (
+	"cmp"
 	"embed"
 	"html/template"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path"
 	"strings"
+	"time"
 	"unicode"
 
 	"dlhu.dev/eva/internal/lobby"
@@ -56,8 +58,44 @@ func New(rooms *lobby.Manager, db *store.DB, prefix string) http.Handler {
 		// also makes ServeMux redirect a bare /eva to /eva/.
 		mux.Handle("GET "+p+"/", http.RedirectHandler(p+"/", http.StatusFound))
 	}
-	return mux
+	return logRequests(mux)
 }
+
+// logRequests logs each request once it has been served. A websocket is logged
+// when it closes, so its duration is how long the player stayed.
+func logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		sr := &statusRecorder{ResponseWriter: w}
+		next.ServeHTTP(sr, r)
+		slog.Info("request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", cmp.Or(sr.status, http.StatusOK),
+			"dur", time.Since(start),
+			// Caddy overwrites X-Forwarded-For, and is the only thing that can
+			// reach us in production; anywhere else the header is just a claim.
+			"remote", cmp.Or(r.Header.Get("X-Forwarded-For"), r.RemoteAddr),
+		)
+	})
+}
+
+// statusRecorder remembers the status a handler sent.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	if sr.status == 0 {
+		sr.status = code
+	}
+	sr.ResponseWriter.WriteHeader(code)
+}
+
+// Unwrap lets http.ResponseController and the websocket upgrade reach the
+// connection underneath to hijack it.
+func (sr *statusRecorder) Unwrap() http.ResponseWriter { return sr.ResponseWriter }
 
 func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
 	p, _ := s.players.get(r)
@@ -114,8 +152,8 @@ func (s *server) identify(w http.ResponseWriter, r *http.Request) player {
 	return s.players.set(w, r, s.prefix, p)
 }
 
-// record stores a finished match. It runs on the room's goroutine, so the
-// write happens on its own; a match nobody signed in for is not worth keeping.
+// record stores a finished match; a match nobody signed in for is not worth
+// keeping.
 func (s *server) record(code string, places []lobby.Placing) {
 	signedIn := false
 	for _, p := range places {
@@ -128,11 +166,9 @@ func (s *server) record(code string, places []lobby.Placing) {
 	for i, p := range places {
 		rows[i] = store.Placing{Place: p.Place, UserID: p.UserID, Name: p.Name}
 	}
-	go func() {
-		if err := s.db.RecordMatch(code, rows); err != nil {
-			log.Printf("recording match in %s: %v", code, err)
-		}
-	}()
+	if err := s.db.RecordMatch(code, rows); err != nil {
+		slog.Error("recording match", "room", code, "err", err)
+	}
 }
 
 func (s *server) handleRoom(w http.ResponseWriter, r *http.Request) {
@@ -169,14 +205,14 @@ func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := room.Serve(w, r, lobby.Player{SessionID: p.SessionID, Name: p.Name, UserID: p.UserID}); err != nil {
-		log.Printf("room %s: %v", code, err)
+		slog.Warn("room connection", "room", code, "err", err)
 	}
 }
 
 func (s *server) render(w http.ResponseWriter, page string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.ExecuteTemplate(w, page, data); err != nil {
-		log.Printf("render %s: %v", page, err)
+		slog.Error("render", "page", page, "err", err)
 	}
 }
 

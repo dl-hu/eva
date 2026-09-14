@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-	"time"
 
 	"dlhu.dev/eva/internal/lobby"
 )
@@ -87,7 +86,6 @@ func TestHistoryColoursNamesByWhoTheyAre(t *testing.T) {
 		{Place: 2, UserID: bob.ID, Name: "bob"},
 		{Place: 3, Name: "anon"},
 	})
-	waitForMatch(t, s, adaUser.ID)
 
 	page := bodyOf(t, get(t, ada, s.base+"/u/ada"))
 	for _, want := range []string{
@@ -116,7 +114,6 @@ func TestGuestOnlyMatchesAreNotRecorded(t *testing.T) {
 	}
 	s.rooms.Record("GUES", []lobby.Placing{{Place: 1, Name: "anon"}, {Place: 2, Name: "anon"}})
 	s.rooms.Record("REAL", []lobby.Placing{{Place: 1, UserID: ada.ID, Name: "ada"}})
-	waitForMatch(t, s, ada.ID)
 
 	got, err := s.db.History(ada.ID, 10)
 	if err != nil {
@@ -125,17 +122,4 @@ func TestGuestOnlyMatchesAreNotRecorded(t *testing.T) {
 	if len(got) != 1 || got[0].Code != "REAL" {
 		t.Errorf("history = %+v, want only the match ada played in", got)
 	}
-}
-
-// waitForMatch blocks until the recorder's write has landed. Recording runs
-// off the room's goroutine, so a test that reads straight after may race it.
-func waitForMatch(t *testing.T, s *site, userID int64) {
-	t.Helper()
-	for range 100 {
-		if got, err := s.db.History(userID, 1); err == nil && len(got) > 0 {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("the match was never recorded")
 }

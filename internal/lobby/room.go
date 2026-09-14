@@ -4,7 +4,8 @@ package lobby
 import (
 	"cmp"
 	"crypto/rand"
-	"log"
+	"log/slog"
+	"runtime/debug"
 	"slices"
 	"sync"
 	"time"
@@ -52,11 +53,16 @@ type Placing struct {
 
 // Manager owns every live room and hands them out by code.
 type Manager struct {
-	// Record, if set, is handed each finished match's scoreboard. It runs on
-	// the room's goroutine, so it must not block for long.
+	// Record, if set, is handed each finished match's scoreboard. It runs on a
+	// goroutine of its own, which Close waits for.
 	Record func(code string, places []Placing)
 
 	idleTimeout time.Duration
+
+	// closing tells every room to shut down, and wg counts what Close waits
+	// for: room goroutines, player connections, and Record calls.
+	closing chan struct{}
+	wg      sync.WaitGroup
 
 	mu    sync.Mutex
 	rooms map[string]*Room
@@ -64,7 +70,7 @@ type Manager struct {
 
 // NewManager returns a Manager with no rooms.
 func NewManager() *Manager {
-	return &Manager{idleTimeout: defaultIdleTimeout, rooms: make(map[string]*Room)}
+	return &Manager{idleTimeout: defaultIdleTimeout, rooms: make(map[string]*Room), closing: make(chan struct{})}
 }
 
 // Create starts a room under a fresh code, hosted by the session named by hostID.
@@ -85,9 +91,17 @@ func (m *Manager) Create(hostID string) *Room {
 		clients: make(map[*client]bool),
 	}
 	m.rooms[code] = r
-	go r.run()
-	log.Printf("room %s created", code)
+	m.wg.Go(r.run)
+	slog.Info("room created", "room", code)
 	return r
+}
+
+// Close shuts every room, which disconnects its players, and waits until they
+// are gone and every finished match has been handed to Record. Call it once no
+// new requests can arrive, such as after http.Server.Shutdown.
+func (m *Manager) Close() {
+	close(m.closing)
+	m.wg.Wait()
 }
 
 // Get looks up a room by code.
@@ -195,6 +209,10 @@ func (r *Room) send(in input) {
 // run is the room's single owner goroutine.
 func (r *Room) run() {
 	defer func() {
+		// A bug in one room closes that room, not every room on the server.
+		if v := recover(); v != nil {
+			slog.Error("room crashed", "room", r.Code, "panic", v, "stack", string(debug.Stack()))
+		}
 		close(r.done)
 		r.mgr.remove(r.Code)
 		if r.ticker != nil {
@@ -203,7 +221,7 @@ func (r *Room) run() {
 		for c := range r.clients {
 			close(c.send)
 		}
-		log.Printf("room %s closed", r.Code)
+		slog.Info("room closed", "room", r.Code)
 	}()
 
 	idle := time.NewTimer(r.mgr.idleTimeout)
@@ -237,6 +255,8 @@ func (r *Room) run() {
 			r.step()
 			continue
 		case <-idle.C:
+			return
+		case <-r.mgr.closing:
 			return
 		}
 
@@ -289,7 +309,7 @@ func (r *Room) start(c *client, w, h int) {
 	}
 	r.broadcast(encode(msg))
 	r.ticker = time.NewTicker(tickRate)
-	log.Printf("room %s started a %dx%d game with %d players", r.Code, w, h, len(r.playing))
+	slog.Info("game started", "room", r.Code, "width", w, "height", h, "players", len(r.playing))
 }
 
 // step advances the game one tick and tells everyone what moved.
@@ -319,8 +339,9 @@ func (r *Room) over() {
 			msg.Winner, msg.Name = i, r.playing[i].name
 		}
 	}
-	if r.mgr.Record != nil {
-		r.mgr.Record(r.Code, toPlacings(places))
+	if record := r.mgr.Record; record != nil {
+		code, placings := r.Code, toPlacings(places)
+		r.mgr.wg.Go(func() { record(code, placings) })
 	}
 	r.ticker.Stop()
 	r.ticker = nil
